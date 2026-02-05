@@ -75,8 +75,8 @@ def run_klein_edit(
     prompt: str,
     fal_key: str,
 ) -> dict:
-    """Run image edit using FAL flux-2/klein/9b without LoRA."""
-    endpoint = "https://fal.run/fal-ai/flux-2/klein/9b/base/edit/lora"
+    """Run image edit using FAL flux-2/klein/9b (non-LoRA endpoint)."""
+    endpoint = "https://fal.run/fal-ai/flux-2/klein/9b/base/edit"
     
     headers = {
         "Authorization": f"Key {fal_key}",
@@ -91,7 +91,6 @@ def run_klein_edit(
         "output_format": "png",
         "guidance_scale": 1.0,  # cfg from ComfyUI
         "num_inference_steps": 10,  # steps from ComfyUI
-        # No loras = pure edit mode
     }
     
     response = requests.post(endpoint, headers=headers, json=payload, timeout=300)
@@ -113,7 +112,7 @@ def update_sheet_column(row_number: int, cdn_url: str):
     sheet = gc.open_by_key(SHEET_ID)
     worksheet = sheet.worksheet(WORKSHEET_NAME)
     
-    cell = f"C{row_number}"
+    cell = f"D{row_number}"
     formula = f'=IMAGE("{cdn_url}")'
     worksheet.update_acell(cell, formula)
 
@@ -140,7 +139,7 @@ def main():
     gc = gspread.authorize(creds)
     sheet = gc.open_by_key(SHEET_ID)
     worksheet = sheet.worksheet(WORKSHEET_NAME)
-    worksheet.update_acell("C1", "FAL Klein Output")
+    worksheet.update_acell("D1", "FAL Klein (non-LoRA)")
     
     results = {
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -167,7 +166,7 @@ def main():
             
             # Upload to CDN
             image_bytes = download_image(result_image_url)
-            blob_name = f"rawclaw/realism-patching/results/{entry['id']}.png"
+            blob_name = f"rawclaw/realism-patching/v2/{entry['id']}.png"
             cdn_url = upload_bytes_to_azure(
                 data=image_bytes,
                 blob_name=blob_name,
