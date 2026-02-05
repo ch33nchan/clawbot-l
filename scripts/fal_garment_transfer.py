@@ -1,7 +1,7 @@
 """
-FAL Nano Banana Pro - Garment Transfer Script
+FAL IDM-VTON - Virtual Try-On / Garment Transfer Script
 
-Runs garment transfer using FAL's nano-banana-pro model.
+Runs garment transfer using FAL's idm-vton model.
 Takes human + garment image URLs and generates the transfer result.
 
 Usage:
@@ -17,10 +17,8 @@ import argparse
 import json
 import os
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 import requests
 from dotenv import load_dotenv
@@ -47,22 +45,24 @@ def run_garment_transfer(
     human_url: str,
     garment_url: str,
     fal_key: str,
+    description: str = "A person wearing the garment",
     timeout_seconds: int = 300,
 ) -> dict:
     """
-    Run garment transfer using FAL nano-banana-pro.
+    Run garment transfer using FAL idm-vton.
     
     Args:
         human_url: URL of the human/model image
         garment_url: URL of the garment image
         fal_key: FAL API key
+        description: Description of the output
         timeout_seconds: Max time to wait for result
         
     Returns:
         dict with result URL and metadata
     """
-    # FAL nano-banana-pro endpoint
-    endpoint = "https://queue.fal.run/fal-ai/nano-banana-pro"
+    # FAL idm-vton endpoint (synchronous)
+    endpoint = "https://fal.run/fal-ai/idm-vton"
     
     headers = {
         "Authorization": f"Key {fal_key}",
@@ -70,42 +70,15 @@ def run_garment_transfer(
     }
     
     payload = {
-        "model_image_url": human_url,
+        "human_image_url": human_url,
         "garment_image_url": garment_url,
+        "description": description,
     }
     
-    # Submit job
-    response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+    response = requests.post(endpoint, headers=headers, json=payload, timeout=timeout_seconds)
     response.raise_for_status()
     
-    result = response.json()
-    request_id = result.get("request_id")
-    
-    if not request_id:
-        # Synchronous result
-        return result
-    
-    # Poll for async result
-    status_url = f"https://queue.fal.run/fal-ai/nano-banana-pro/requests/{request_id}/status"
-    result_url = f"https://queue.fal.run/fal-ai/nano-banana-pro/requests/{request_id}"
-    
-    start_time = time.time()
-    while time.time() - start_time < timeout_seconds:
-        status_response = requests.get(status_url, headers=headers, timeout=30)
-        status_response.raise_for_status()
-        status = status_response.json()
-        
-        if status.get("status") == "COMPLETED":
-            # Fetch result
-            result_response = requests.get(result_url, headers=headers, timeout=30)
-            result_response.raise_for_status()
-            return result_response.json()
-        elif status.get("status") == "FAILED":
-            raise RuntimeError(f"FAL job failed: {status}")
-        
-        time.sleep(2)
-    
-    raise TimeoutError(f"FAL job timed out after {timeout_seconds}s")
+    return response.json()
 
 
 def download_image(url: str) -> bytes:
@@ -154,10 +127,11 @@ def process_combinations(
                 human_url=combo["human_url"],
                 garment_url=combo["garment_url"],
                 fal_key=fal_key,
+                description="A person wearing the garment",
             )
             
             # Extract result image URL
-            result_image_url = fal_result.get("image", {}).get("url") or fal_result.get("images", [{}])[0].get("url")
+            result_image_url = fal_result.get("image", {}).get("url")
             
             cdn_url = None
             if upload_to_cdn and result_image_url:
@@ -200,7 +174,7 @@ def process_combinations(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="FAL Nano Banana Pro Garment Transfer")
+    parser = argparse.ArgumentParser(description="FAL IDM-VTON Garment Transfer")
     parser.add_argument("--input", "-i", required=True, help="Input JSON with combinations")
     parser.add_argument("--output", "-o", required=True, help="Output JSON path for results")
     parser.add_argument("--no-cdn", action="store_true", help="Skip re-uploading to CDN")
