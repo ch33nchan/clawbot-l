@@ -14,6 +14,9 @@ env/
 inputs/
 outputs/
 
+# Models (large files)
+models/
+
 # OS
 .DS_Store
 Thumbs.db

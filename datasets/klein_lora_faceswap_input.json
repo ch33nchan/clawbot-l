@@ -1,0 +1,19 @@
+{
+  "source_sheet": "Char Consistency F5 Data",
+  "spreadsheet_id": "1g4vcE4dmxq1SmecRPAwXWvDQMcsZFMWae8lCFdi0vvo",
+  "lora_url": "https://huggingface.co/Alissonerdx/BFS-Best-Face-Swap/resolve/main/bfs_head_v1_flux-klein_9b_step3500_rank128.safetensors",
+  "entries": [
+    {
+      "id": "char_consistency_1",
+      "row_number": 2,
+      "base_image_url": "https://content.dashtoon.ai/stability-images/remix/swap_test_dataset/675938637b2c40fa91fae68fe494d9d3/e2ff678256834ab1b0bcd6ab14abb381/base.png",
+      "char_image_url": "https://content.dashtoon.ai/stability-images/remix/swap_test_dataset/675938637b2c40fa91fae68fe494d9d3/e2ff678256834ab1b0bcd6ab14abb381/char.png"
+    },
+    {
+      "id": "char_consistency_2",
+      "row_number": 3,
+      "base_image_url": "https://content.dashtoon.ai/stability-images/remix/swap_test_dataset/675938637b2c40fa91fae68fe494d9d3/d77921c87cf5410cac01724dde20e86d/base.png",
+      "char_image_url": "https://content.dashtoon.ai/stability-images/remix/swap_test_dataset/675938637b2c40fa91fae68fe494d9d3/d77921c87cf5410cac01724dde20e86d/char.png"
+    }
+  ]
+}
