@@ -10,10 +10,9 @@ __pycache__/
 venv/
 env/
 
-# Outputs (may contain large files)
-outputs/*.json
-outputs/*.csv
-!outputs/.gitkeep
+# Inputs/Outputs (may contain large files)
+inputs/
+outputs/
 
 # OS
 .DS_Store
