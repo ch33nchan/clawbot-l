@@ -3,15 +3,19 @@
 CC-F5-Variations: Expression-aware face swap workflow.
 
 1. Extract expression from Column A (Original Image)
-2. Build prompt with expression for Klein LoRA
+2. Build prompt with expression for Klein edit
 3. Run face swap: Input1=Column C (Swapped), Input2=Column B (RefAngle)
 4. Output → Column D (Swapped Image 2) as =IMAGE()
 5. Column E: Prompt used
+6. Column F: FAL Request ID
+
+Uses: fal-ai/flux-2/klein/9b/base/edit (non-LoRA edit model)
 """
 
 import os
 import sys
 import re
+import requests
 import fal_client
 import gspread
 from google.oauth2.service_account import Credentials
@@ -23,7 +27,8 @@ SHEET_ID = '1g4vcE4dmxq1SmecRPAwXWvDQMcsZFMWae8lCFdi0vvo'
 WORKSHEET_NAME = 'CC-F5-Variations'
 CREDENTIALS_PATH = '/home/ubuntu/.openclaw/workspace/.secrets/google-service-account.json'
 
-KLEIN_LORA_URL = "https://huggingface.co/Alissonerdx/BFS-Best-Face-Swap/resolve/main/bfs_head_v1_flux-klein_9b_step3750_rank64.safetensors"
+# Klein edit endpoint (non-LoRA)
+KLEIN_EDIT_ENDPOINT = "https://fal.run/fal-ai/flux-2/klein/9b/base/edit"
 
 EXPRESSION_PROMPT = """Analyze the facial expression in this image. Describe concisely:
 - Emotion (happy, sad, neutral, surprised, etc.)
@@ -31,6 +36,14 @@ EXPRESSION_PROMPT = """Analyze the facial expression in this image. Describe con
 - Mouth position
 - Overall mood
 Keep it to 2-3 sentences max."""
+
+
+def get_fal_key() -> str:
+    """Get FAL API key from environment."""
+    key = os.getenv("FAL_KEY")
+    if not key:
+        raise ValueError("Missing FAL_KEY environment variable")
+    return key
 
 
 def get_sheet():
@@ -65,36 +78,62 @@ def analyze_expression(image_url: str) -> str:
     return result.get('output', 'neutral expression')
 
 
-def run_klein_faceswap(base_image_url: str, face_image_url: str, expression: str) -> str:
-    """Run Klein LoRA face swap with expression-aware prompt."""
-    prompt = f"head_swap: start with Picture 1 as the base image, keeping its body and scene intact. Replace the head with the head from Picture 2. The face should have {expression}. Match skin tone and lighting naturally."
+def run_klein_edit_faceswap(base_image_url: str, face_image_url: str, expression: str) -> tuple[str, str, str]:
+    """
+    Run Klein edit face swap with expression-aware prompt.
     
-    result = fal_client.subscribe(
-        "fal-ai/flux-general/image-to-image",
-        arguments={
-            "image_url": base_image_url,
-            "image2_url": face_image_url,
-            "prompt": prompt,
-            "loras": [{"path": KLEIN_LORA_URL, "scale": 1.0}],
-            "image_size": "landscape_16_9",
-            "num_inference_steps": 28,
-            "guidance_scale": 3.5,
-            "strength": 0.85
-        }
-    )
+    Uses fal-ai/flux-2/klein/9b/base/edit (non-LoRA).
     
-    return result['images'][0]['url'], prompt
+    Args:
+        base_image_url: URL of base image (body/scene to keep)
+        face_image_url: URL of face image (face to swap in)
+        expression: Expression description to include in prompt
+        
+    Returns:
+        (output_url, prompt, request_id)
+    """
+    fal_key = get_fal_key()
+    
+    prompt = f"Apply the face from the second image onto the person in the first image. Keep the pose, clothing, and background from the first image. The face should have {expression}. Make it look natural and realistic."
+    
+    headers = {
+        "Authorization": f"Key {fal_key}",
+        "Content-Type": "application/json",
+    }
+    
+    payload = {
+        "prompt": prompt,
+        "image_urls": [base_image_url, face_image_url],
+        "num_images": 1,
+        "output_format": "png",
+        "guidance_scale": 5,
+        "num_inference_steps": 28,
+    }
+    
+    response = requests.post(KLEIN_EDIT_ENDPOINT, headers=headers, json=payload, timeout=300)
+    response.raise_for_status()
+    
+    result = response.json()
+    
+    # Extract result
+    images = result.get("images", [])
+    output_url = images[0].get("url") if images else None
+    request_id = result.get("request_id", response.headers.get("x-fal-request-id", "N/A"))
+    
+    return output_url, prompt, request_id
 
 
 def main(num_rows: int = 2):
     print(f"Processing {num_rows} rows...", flush=True)
+    print(f"Using model: fal-ai/flux-2/klein/9b/base/edit (non-LoRA)", flush=True)
     
     sheet = get_sheet()
     
-    # Update headers D and E
+    # Update headers D, E, F
     sheet.update_cell(1, 4, 'Swapped Image 2')
     sheet.update_cell(1, 5, 'Prompt Used')
-    print("Headers updated: D=Swapped Image 2, E=Prompt Used", flush=True)
+    sheet.update_cell(1, 6, 'FAL Request ID')
+    print("Headers updated: D=Swapped Image 2, E=Prompt, F=Request ID", flush=True)
     
     for row in range(2, 2 + num_rows):
         print(f"\n=== Row {row} ===", flush=True)
@@ -112,25 +151,29 @@ def main(num_rows: int = 2):
             print(f"  Missing data, skipping. A={bool(original_url)}, B={bool(ref_angle_url)}, C={bool(swapped_url)}", flush=True)
             continue
         
-        print(f"  A (Original): ...{original_url[-40:]}", flush=True)
-        print(f"  B (RefAngle): ...{ref_angle_url[-40:]}", flush=True)
-        print(f"  C (Swapped): ...{swapped_url[-40:]}", flush=True)
+        print(f"  A (Original): {original_url}", flush=True)
+        print(f"  B (RefAngle): {ref_angle_url}", flush=True)
+        print(f"  C (Swapped):  {swapped_url}", flush=True)
         
         # Step 1: Extract expression from Column A
         print(f"  Extracting expression from A...", flush=True)
         expression = analyze_expression(original_url)
-        print(f"  Expression: {expression[:80]}...", flush=True)
+        print(f"  Expression: {expression}", flush=True)
         
-        # Step 2: Run face swap (C=base, B=face)
-        print(f"  Running Klein LoRA swap (C+B)...", flush=True)
-        output_url, prompt = run_klein_faceswap(swapped_url, ref_angle_url, expression)
-        print(f"  Output: ...{output_url[-50:]}", flush=True)
+        # Step 2: Run face swap using Klein edit (C=base, B=face)
+        print(f"  Running Klein edit swap...", flush=True)
+        print(f"    image_urls[0] (base): C", flush=True)
+        print(f"    image_urls[1] (face): B", flush=True)
+        
+        output_url, prompt, request_id = run_klein_edit_faceswap(swapped_url, ref_angle_url, expression)
+        
+        print(f"  Request ID: {request_id}", flush=True)
+        print(f"  Output: {output_url}", flush=True)
         
         # Step 3: Update sheet
-        # Column D: =IMAGE(output_url)
         sheet.update(values=[[f'=IMAGE("{output_url}")']], range_name=f'D{row}', value_input_option='USER_ENTERED')
-        # Column E: prompt
         sheet.update_cell(row, 5, prompt)
+        sheet.update_cell(row, 6, request_id)
         
         print(f"  ✓ Row {row} complete", flush=True)
     
