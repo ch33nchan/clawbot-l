@@ -3,13 +3,13 @@
 CC-F5-Variations: Expression-aware face swap workflow.
 
 1. Extract expression from Column A (Original Image)
-2. Build prompt with expression for Klein edit
+2. Build prompt with expression for Klein LoRA edit
 3. Run face swap: Input1=Column C (Swapped), Input2=Column B (RefAngle)
 4. Output → Column D (Swapped Image 2) as =IMAGE()
 5. Column E: Prompt used
-6. Column F: FAL Request ID
+6. Column F: FAL Playground link (with Request ID)
 
-Uses: fal-ai/flux-2/klein/9b/base/edit (non-LoRA edit model)
+Uses: fal-ai/flux-2/klein/9b/base/edit/lora with BFS-Best-Face-Swap LoRA
 """
 
 import os
@@ -27,8 +27,10 @@ SHEET_ID = '1g4vcE4dmxq1SmecRPAwXWvDQMcsZFMWae8lCFdi0vvo'
 WORKSHEET_NAME = 'CC-F5-Variations'
 CREDENTIALS_PATH = '/home/ubuntu/.openclaw/workspace/.secrets/google-service-account.json'
 
-# Klein edit endpoint (non-LoRA)
-KLEIN_EDIT_ENDPOINT = "https://fal.run/fal-ai/flux-2/klein/9b/base/edit"
+# Klein LoRA edit endpoint
+KLEIN_LORA_ENDPOINT = "https://fal.run/fal-ai/flux-2/klein/9b/base/edit/lora"
+KLEIN_LORA_URL = "https://huggingface.co/Alissonerdx/BFS-Best-Face-Swap/resolve/main/bfs_head_v1_flux-klein_9b_step3750_rank64.safetensors"
+FAL_PLAYGROUND_BASE = "https://fal.ai/models/fal-ai/flux-2/klein/9b/base/edit/lora/playground?requestId="
 
 EXPRESSION_PROMPT = """Analyze the facial expression in this image. Describe concisely:
 - Emotion (happy, sad, neutral, surprised, etc.)
@@ -78,11 +80,11 @@ def analyze_expression(image_url: str) -> str:
     return result.get('output', 'neutral expression')
 
 
-def run_klein_edit_faceswap(base_image_url: str, face_image_url: str, expression: str) -> tuple[str, str, str]:
+def run_klein_lora_faceswap(base_image_url: str, face_image_url: str, expression: str) -> tuple[str, str, str]:
     """
-    Run Klein edit face swap with expression-aware prompt.
+    Run Klein LoRA face swap with expression-aware prompt.
     
-    Uses fal-ai/flux-2/klein/9b/base/edit (non-LoRA).
+    Uses fal-ai/flux-2/klein/9b/base/edit/lora with BFS-Best-Face-Swap LoRA.
     
     Args:
         base_image_url: URL of base image (body/scene to keep)
@@ -90,7 +92,7 @@ def run_klein_edit_faceswap(base_image_url: str, face_image_url: str, expression
         expression: Expression description to include in prompt
         
     Returns:
-        (output_url, prompt, request_id)
+        (output_url, prompt, playground_link)
     """
     fal_key = get_fal_key()
     
@@ -108,9 +110,15 @@ def run_klein_edit_faceswap(base_image_url: str, face_image_url: str, expression
         "output_format": "png",
         "guidance_scale": 5,
         "num_inference_steps": 28,
+        "loras": [
+            {
+                "path": KLEIN_LORA_URL,
+                "scale": 1.0
+            }
+        ]
     }
     
-    response = requests.post(KLEIN_EDIT_ENDPOINT, headers=headers, json=payload, timeout=300)
+    response = requests.post(KLEIN_LORA_ENDPOINT, headers=headers, json=payload, timeout=300)
     response.raise_for_status()
     
     result = response.json()
@@ -119,21 +127,23 @@ def run_klein_edit_faceswap(base_image_url: str, face_image_url: str, expression
     images = result.get("images", [])
     output_url = images[0].get("url") if images else None
     request_id = result.get("request_id", response.headers.get("x-fal-request-id", "N/A"))
+    playground_link = f"{FAL_PLAYGROUND_BASE}{request_id}"
     
-    return output_url, prompt, request_id
+    return output_url, prompt, playground_link
 
 
 def main(num_rows: int = 2):
     print(f"Processing {num_rows} rows...", flush=True)
-    print(f"Using model: fal-ai/flux-2/klein/9b/base/edit (non-LoRA)", flush=True)
+    print(f"Using model: fal-ai/flux-2/klein/9b/base/edit/lora", flush=True)
+    print(f"LoRA: {KLEIN_LORA_URL}", flush=True)
     
     sheet = get_sheet()
     
     # Update headers D, E, F
     sheet.update_cell(1, 4, 'Swapped Image 2')
     sheet.update_cell(1, 5, 'Prompt Used')
-    sheet.update_cell(1, 6, 'FAL Request ID')
-    print("Headers updated: D=Swapped Image 2, E=Prompt, F=Request ID", flush=True)
+    sheet.update_cell(1, 6, 'FAL Playground Link')
+    print("Headers updated: D=Swapped Image 2, E=Prompt, F=Playground Link", flush=True)
     
     for row in range(2, 2 + num_rows):
         print(f"\n=== Row {row} ===", flush=True)
@@ -160,20 +170,20 @@ def main(num_rows: int = 2):
         expression = analyze_expression(original_url)
         print(f"  Expression: {expression}", flush=True)
         
-        # Step 2: Run face swap using Klein edit (C=base, B=face)
-        print(f"  Running Klein edit swap...", flush=True)
+        # Step 2: Run face swap using Klein LoRA (C=base, B=face)
+        print(f"  Running Klein LoRA swap...", flush=True)
         print(f"    image_urls[0] (base): C", flush=True)
         print(f"    image_urls[1] (face): B", flush=True)
         
-        output_url, prompt, request_id = run_klein_edit_faceswap(swapped_url, ref_angle_url, expression)
+        output_url, prompt, playground_link = run_klein_lora_faceswap(swapped_url, ref_angle_url, expression)
         
-        print(f"  Request ID: {request_id}", flush=True)
+        print(f"  Playground: {playground_link}", flush=True)
         print(f"  Output: {output_url}", flush=True)
         
         # Step 3: Update sheet
         sheet.update(values=[[f'=IMAGE("{output_url}")']], range_name=f'D{row}', value_input_option='USER_ENTERED')
         sheet.update_cell(row, 5, prompt)
-        sheet.update_cell(row, 6, request_id)
+        sheet.update_cell(row, 6, playground_link)
         
         print(f"  ✓ Row {row} complete", flush=True)
     
