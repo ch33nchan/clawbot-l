@@ -29,7 +29,7 @@ CREDENTIALS_PATH = '/home/ubuntu/.openclaw/workspace/.secrets/google-service-acc
 
 # Klein LoRA edit endpoint
 KLEIN_LORA_ENDPOINT = "https://fal.run/fal-ai/flux-2/klein/9b/base/edit/lora"
-KLEIN_LORA_URL = "https://huggingface.co/Alissonerdx/BFS-Best-Face-Swap/resolve/main/bfs_head_v1_flux-klein_9b_step3750_rank64.safetensors"
+KLEIN_LORA_URL = "https://huggingface.co/Alissonerdx/BFS-Best-Face-Swap/resolve/main/bfs_head_v1_flux-klein_9b_step3500_rank128.safetensors"
 FAL_PLAYGROUND_BASE = "https://fal.ai/models/fal-ai/flux-2/klein/9b/base/edit/lora/playground?requestId="
 
 EXPRESSION_PROMPT = """Analyze the facial expression in this image. Describe concisely:
