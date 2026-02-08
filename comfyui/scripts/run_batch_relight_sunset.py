@@ -99,8 +99,8 @@ def main():
         try:
             cdn_url = run_relight(image_url, SUNSET_PROMPT)
             
-            # Update sheet columns D & E
-            update_sheet_cells(worksheet, row_num, SUNSET_PROMPT[:100] + "...", cdn_url)
+            # Update sheet columns D & E (use FULL prompt, never truncate!)
+            update_sheet_cells(worksheet, row_num, SUNSET_PROMPT, cdn_url)
             print(f"   ✅ Updated sheet row {row_num}", flush=True)
             success_count += 1
             
