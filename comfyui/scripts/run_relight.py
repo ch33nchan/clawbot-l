@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 
 # Add parent directory for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from scripts.upload_file_to_azure import upload_file_to_azure
+from scripts.upload_file_to_azure import upload_file_to_azure, load_env
 
 # Configuration
 GPU_HOST = "ubuntu@54.159.123.145"
@@ -62,18 +62,33 @@ def download_image(url: str, local_path: str):
             f.write(response.read())
 
 
-def queue_prompt(workflow: dict) -> dict:
-    """Queue prompt on ComfyUI via SSH."""
-    # Escape the JSON for shell
-    workflow_json = json.dumps({"prompt": workflow}).replace('"', '\\"').replace('$', '\\$')
+def queue_prompt(workflow: dict, run_id: str) -> dict:
+    """Queue prompt on ComfyUI via SSH by writing JSON to temp file."""
+    import tempfile
     
-    cmd = f"curl -s -X POST {COMFYUI_API_URL}/prompt -H 'Content-Type: application/json' -d \"{workflow_json}\""
-    result = run_ssh(cmd)
+    # Write workflow JSON to local temp file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        json.dump({"prompt": workflow}, f)
+        local_json = f.name
     
-    if result.returncode != 0:
-        raise Exception(f"Failed to queue prompt: {result.stderr}")
-    
-    return json.loads(result.stdout) if result.stdout else {}
+    try:
+        # Copy JSON to GPU
+        remote_json = f"/tmp/workflow_{run_id}.json"
+        scp_to_gpu(local_json, remote_json)
+        
+        # Queue prompt using the JSON file
+        cmd = f"curl -s -X POST {COMFYUI_API_URL}/prompt -H 'Content-Type: application/json' -d @{remote_json}"
+        result = run_ssh(cmd)
+        
+        # Cleanup remote JSON
+        run_ssh(f"rm -f {remote_json}", check=False)
+        
+        if result.returncode != 0:
+            raise Exception(f"Failed to queue prompt: {result.stderr}")
+        
+        return json.loads(result.stdout) if result.stdout else {}
+    finally:
+        os.unlink(local_json)
 
 
 def wait_for_output(output_prefix: str, timeout: int = 300) -> str:
@@ -155,7 +170,7 @@ def run_relight(input_image: str, prompt: str = None, output_prefix: str = None)
             
             # Step 4: Queue the prompt
             print(f"[{run_id}] Queuing prompt on ComfyUI...")
-            queue_result = queue_prompt(workflow)
+            queue_result = queue_prompt(workflow, run_id)
             print(f"[{run_id}] Queue response: {queue_result}")
             
             # Step 5: Wait for output
@@ -171,8 +186,8 @@ def run_relight(input_image: str, prompt: str = None, output_prefix: str = None)
             # Step 7: Upload to Azure CDN
             print(f"[{run_id}] Uploading to Azure CDN...")
             cdn_url = upload_file_to_azure(
-                local_output,
-                f"comfyui/relight/{output_filename}"
+                local_path=local_output,
+                blob_name=f"comfyui/relight/{output_filename}"
             )
             
             print(f"[{run_id}] ✓ Complete! CDN URL: {cdn_url}")
@@ -193,8 +208,7 @@ def main():
     args = parser.parse_args()
     
     # Load environment
-    from dotenv import load_dotenv
-    load_dotenv(Path(__file__).parent.parent.parent / ".env")
+    load_env(Path(__file__).parent.parent.parent / ".env")
     
     try:
         cdn_url = run_relight(args.input, args.prompt, args.prefix)
