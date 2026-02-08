@@ -91,8 +91,8 @@ def queue_prompt(workflow: dict, run_id: str) -> dict:
         os.unlink(local_json)
 
 
-def wait_for_output(output_prefix: str, timeout: int = 300) -> str:
-    """Wait for output file with given prefix."""
+def wait_for_output(output_prefix: str, timeout: int = 300, settle_time: float = 3.0) -> str:
+    """Wait for output file with given prefix, then wait for it to finish writing."""
     start_time = time.time()
     
     while time.time() - start_time < timeout:
@@ -103,6 +103,9 @@ def wait_for_output(output_prefix: str, timeout: int = 300) -> str:
             # Find the actual image file (not temp files)
             for f in files:
                 if f.endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                    # Wait for file to finish writing
+                    print(f"    File detected, waiting {settle_time}s for write to complete...")
+                    time.sleep(settle_time)
                     return f
         
         time.sleep(1)
