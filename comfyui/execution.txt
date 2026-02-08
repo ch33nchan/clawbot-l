@@ -1,0 +1,142 @@
+# ComfyUI Workflow Execution Guide
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     OpenClaw Server (3.228.228.176)                │
+│                                                                     │
+│  1. Download input image (URL or local)                            │
+│  2. SCP input → GPU server                                         │
+│  3. SSH: POST workflow to ComfyUI API                              │
+│  4. SSH: Poll output directory                                      │
+│  5. SCP result ← GPU server                                        │
+│  6. Upload to Azure CDN                                            │
+│  7. Return CDN URL                                                 │
+│                                                                     │
+│  [Azure credentials stay here - secure]                            │
+└───────────────────────────┬─────────────────────────────────────────┘
+                            │ SSH (port 22)
+                            ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                     GPU Server (54.159.123.145)                    │
+│                                                                     │
+│  ComfyUI running on port 4000                                      │
+│  - Input folder: /home/ubuntu/ComfyUI/input/                       │
+│  - Output folder: /home/ubuntu/ComfyUI/output/                     │
+│  - Tmux session: run                                               │
+│                                                                     │
+│  [No Azure credentials needed]                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## File Locations
+
+### On OpenClaw Server:
+- Script: /home/ubuntu/research-agent-workflows/comfyui/scripts/run_relight.py
+- Workflow: /home/ubuntu/research-agent-workflows/comfyui/workflows/flux2_klein_relight.json
+- Azure upload: /home/ubuntu/research-agent-workflows/scripts/upload_file_to_azure.py
+- Credentials: /home/ubuntu/research-agent-workflows/.env
+
+### On GPU Server:
+- ComfyUI: /home/ubuntu/ComfyUI/
+- Input folder: /home/ubuntu/ComfyUI/input/
+- Output folder: /home/ubuntu/ComfyUI/output/
+- Venv: /home/ubuntu/ComfyUI/venv/bin/python
+- Start command: python main.py --port 4000
+
+## Commands
+
+### Test single image:
+```bash
+cd /home/ubuntu/research-agent-workflows
+python comfyui/scripts/run_relight.py --input "https://example.com/image.png"
+```
+
+### Test with local file:
+```bash
+python comfyui/scripts/run_relight.py --input /path/to/image.png
+```
+
+### Test with custom prompt:
+```bash
+python comfyui/scripts/run_relight.py \
+  --input "https://example.com/image.png" \
+  --prompt "Relight with dramatic studio lighting..."
+```
+
+## Manual SSH Commands (for debugging)
+
+### Check if ComfyUI is running:
+```bash
+ssh ubuntu@54.159.123.145 "curl -s localhost:4000/system_stats | head -c 100"
+```
+
+### List input folder:
+```bash
+ssh ubuntu@54.159.123.145 "ls -la /home/ubuntu/ComfyUI/input/"
+```
+
+### List output folder:
+```bash
+ssh ubuntu@54.159.123.145 "ls -la /home/ubuntu/ComfyUI/output/"
+```
+
+### Copy file to GPU:
+```bash
+scp /local/path/image.png ubuntu@54.159.123.145:/home/ubuntu/ComfyUI/input/
+```
+
+### Copy file from GPU:
+```bash
+scp ubuntu@54.159.123.145:/home/ubuntu/ComfyUI/output/result.png /local/path/
+```
+
+### Queue a prompt manually:
+```bash
+ssh ubuntu@54.159.123.145 'curl -X POST http://localhost:4000/prompt \
+  -H "Content-Type: application/json" \
+  -d @- << EOF
+{"prompt": <workflow_json>}
+EOF'
+```
+
+### Restart ComfyUI (if crashed):
+```bash
+ssh ubuntu@54.159.123.145 "cd /home/ubuntu/ComfyUI && source venv/bin/activate && pkill -f 'python main.py' ; nohup python main.py --port 4000 > /tmp/comfyui.log 2>&1 &"
+```
+
+### Check ComfyUI logs:
+```bash
+ssh ubuntu@54.159.123.145 "tail -50 /tmp/comfyui.log"
+```
+
+## Workflow JSON Key Nodes
+
+- Node "19": LoadImage - set `inputs.image` to input filename
+- Node "17": CLIP Text Encode (Positive Prompt) - set `inputs.text` for prompt
+- Node "13": Image Save - set `inputs.filename_prefix` and `inputs.output_path`
+
+## Batch Processing (from Google Sheet)
+
+Future script will:
+1. Read image URLs from Sheet column
+2. Run relight on each
+3. Write CDN URLs back to output column
+
+## Troubleshooting
+
+### ComfyUI not responding:
+1. SSH to GPU: `ssh ubuntu@54.159.123.145`
+2. Check tmux: `tmux a -t run`
+3. Restart if needed: `python main.py --port 4000`
+
+### Workflow fails:
+1. Check GPU has required models
+2. Check ComfyUI logs for errors
+3. Verify input image was copied correctly
+
+### Azure upload fails:
+1. Check .env has credentials
+2. Verify AZURE_STORAGE_CONNECTION_STRING
+3. Test upload script directly
