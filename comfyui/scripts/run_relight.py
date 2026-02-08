@@ -35,35 +35,34 @@ WORKFLOW_PATH = Path(__file__).parent.parent / "workflows" / "flux2_klein_religh
 LOCK_FILE = Path(__file__).parent.parent / "comfyui_lock.txt"
 
 
-def acquire_lock(timeout: int = 600, poll_interval: int = 5) -> bool:
+class ComfyUIBusyError(Exception):
+    """Raised when ComfyUI is busy with another workflow."""
+    pass
+
+
+def acquire_lock() -> bool:
     """
-    Acquire lock for ComfyUI. Waits if another process is running.
-    Returns True if lock acquired, raises TimeoutError if timeout exceeded.
+    Acquire lock for ComfyUI. Fails immediately if busy.
+    Returns True if lock acquired, raises ComfyUIBusyError if busy.
     """
-    start_time = time.time()
-    
-    while time.time() - start_time < timeout:
-        try:
-            # Read current lock value
-            if LOCK_FILE.exists():
-                current = int(LOCK_FILE.read_text().strip())
-            else:
-                current = 0
-            
-            if current == 0:
-                # Lock is free, acquire it
-                LOCK_FILE.write_text("1")
-                return True
-            else:
-                # Lock is held, wait
-                print(f"    ⏳ ComfyUI busy, waiting {poll_interval}s...", flush=True)
-                time.sleep(poll_interval)
-        except (ValueError, IOError) as e:
-            # File might be corrupted, try to reset
+    try:
+        # Read current lock value
+        if LOCK_FILE.exists():
+            current = int(LOCK_FILE.read_text().strip())
+        else:
+            current = 0
+        
+        if current == 0:
+            # Lock is free, acquire it
             LOCK_FILE.write_text("1")
             return True
-    
-    raise TimeoutError(f"⚠️ ComfyUI resources busy - timed out after {timeout}s waiting for lock. Another workflow is running. Try again later.")
+        else:
+            # Lock is held - fail immediately
+            raise ComfyUIBusyError("⚠️ ComfyUI is busy running another workflow. Please try again later.")
+    except (ValueError, IOError):
+        # File might be corrupted, try to acquire
+        LOCK_FILE.write_text("1")
+        return True
 
 
 def release_lock():
