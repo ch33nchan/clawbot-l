@@ -32,6 +32,46 @@ GPU_COMFYUI_INPUT = "/home/ubuntu/ComfyUI/input"
 GPU_COMFYUI_OUTPUT = "/home/ubuntu/ComfyUI/output"
 COMFYUI_API_URL = "http://localhost:4000"
 WORKFLOW_PATH = Path(__file__).parent.parent / "workflows" / "flux2_klein_relight.json"
+LOCK_FILE = Path(__file__).parent.parent / "comfyui_lock.txt"
+
+
+def acquire_lock(timeout: int = 600, poll_interval: int = 5) -> bool:
+    """
+    Acquire lock for ComfyUI. Waits if another process is running.
+    Returns True if lock acquired, raises TimeoutError if timeout exceeded.
+    """
+    start_time = time.time()
+    
+    while time.time() - start_time < timeout:
+        try:
+            # Read current lock value
+            if LOCK_FILE.exists():
+                current = int(LOCK_FILE.read_text().strip())
+            else:
+                current = 0
+            
+            if current == 0:
+                # Lock is free, acquire it
+                LOCK_FILE.write_text("1")
+                return True
+            else:
+                # Lock is held, wait
+                print(f"    ⏳ ComfyUI busy, waiting {poll_interval}s...", flush=True)
+                time.sleep(poll_interval)
+        except (ValueError, IOError) as e:
+            # File might be corrupted, try to reset
+            LOCK_FILE.write_text("1")
+            return True
+    
+    raise TimeoutError(f"Timeout waiting for ComfyUI lock after {timeout}s")
+
+
+def release_lock():
+    """Release the ComfyUI lock."""
+    try:
+        LOCK_FILE.write_text("0")
+    except IOError:
+        pass  # Best effort
 
 DEFAULT_PROMPT = """Relight the image to remove all existing lighting conditions and replace them with soft outdoor neutral and natural with slightly higher contrast and add depth to the image, uniform illumination. Apply soft, evenly distributed lighting with no directional shadows, no harsh highlights, and no dramatic contrast. Maintain the original identity of all subjects exactly—preserve facial structure, skin tone, proportions, expressions, hair, clothing, and textures. Do not alter pose, camera angle, background geometry, or image composition. Lighting should appear balanced. Ensure consistent exposure across the entire image with realistic depth and make sure to keep the background as it is."""
 
@@ -137,6 +177,11 @@ def run_relight(input_image: str, prompt: str = None, output_prefix: str = None)
     
     print(f"[{run_id}] Starting relighting workflow...")
     
+    # Acquire lock before proceeding
+    print(f"[{run_id}] Acquiring ComfyUI lock...")
+    acquire_lock()
+    print(f"[{run_id}] Lock acquired!")
+    
     try:
         # Step 1: Get input image to local temp file
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -197,9 +242,11 @@ def run_relight(input_image: str, prompt: str = None, output_prefix: str = None)
             return cdn_url
             
     finally:
-        # Cleanup
+        # Cleanup and release lock
         print(f"[{run_id}] Cleaning up...")
         cleanup_gpu(run_id)
+        release_lock()
+        print(f"[{run_id}] Lock released.")
 
 
 def main():
