@@ -20,7 +20,7 @@ SHEET_ID = "1g4vcE4dmxq1SmecRPAwXWvDQMcsZFMWae8lCFdi0vvo"
 WORKSHEET_GID = 1293424979
 SERVICE_ACCOUNT_PATH = "/home/ubuntu/.openclaw/workspace/.secrets/google-service-account.json"
 
-SUNSET_PROMPT = """Relight the image with warm golden hour lighting. Apply soft, directional sunlight from the side with warm orange and yellow tones. Create gentle shadows and subtle rim lighting. Maintain the original identity of all subjects exactly—preserve facial structure, skin tone, proportions, expressions, hair, clothing, and textures. Do not alter pose, camera angle, background geometry, or image composition. Make the lighting feel natural and cinematic like a sunset scene."""
+SUNSET_PROMPT = """Relight the image to remove all existing lighting conditions and replace them with dark orange sunset lighting and add depth to the image, uniform illumination. Apply soft, evenly distributed lighting with no directional shadows, no harsh highlights, and no dramatic contrast. Maintain the original identity of all subjects exactly—preserve facial structure, skin tone, proportions, expressions, hair, clothing, and textures. Do not alter pose, camera angle, background geometry, or image composition. Lighting should appear balanced. Ensure consistent exposure across the entire image with realistic depth and make sure to keep the background as it is."""
 
 
 def extract_url_from_formula(formula: str) -> str | None:
@@ -82,10 +82,10 @@ def main():
             print(f"\n⚠️ Row {row_num} missing source image", flush=True)
             continue
         
-        # Check if already processed (has column E)
-        if len(row) >= 5 and row[4]:
-            print(f"\n⚠️ Row {row_num} already has sunset output, skipping", flush=True)
-            continue
+        # Check if already processed (has column E) - skip check if --force
+        # if len(row) >= 5 and row[4]:
+        #     print(f"\n⚠️ Row {row_num} already has sunset output, skipping", flush=True)
+        #     continue
         
         image_url = extract_url_from_formula(row[0])
         
