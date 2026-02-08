@@ -63,7 +63,7 @@ def acquire_lock(timeout: int = 600, poll_interval: int = 5) -> bool:
             LOCK_FILE.write_text("1")
             return True
     
-    raise TimeoutError(f"Timeout waiting for ComfyUI lock after {timeout}s")
+    raise TimeoutError(f"⚠️ ComfyUI resources busy - timed out after {timeout}s waiting for lock. Another workflow is running. Try again later.")
 
 
 def release_lock():
