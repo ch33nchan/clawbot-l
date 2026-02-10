@@ -1,0 +1,109 @@
+diff --git a/scripts/fix_openclaw_signal_setup.sh b/scripts/fix_openclaw_signal_setup.sh
+new file mode 100755
+index 0000000..56562a2
+--- /dev/null
++++ b/scripts/fix_openclaw_signal_setup.sh
+@@ -0,0 +1,103 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++SIGNAL_ACCOUNT="${1:-+918296844545}"
++OPENCLAW_DIR="$HOME/.openclaw"
++OPENCLAW_CONFIG="$OPENCLAW_DIR/openclaw.json"
++
++if [[ ! "$SIGNAL_ACCOUNT" =~ ^\+[1-9][0-9]{7,14}$ ]]; then
++  echo "Invalid E.164 number: $SIGNAL_ACCOUNT"
++  exit 1
++fi
++
++echo "[1/8] Base packages..."
++sudo apt-get update
++sudo apt-get install -y curl ca-certificates git python3 python3-venv python3-pip openjdk-21-jre tar
++
++echo "[2/8] NVM + Node 22..."
++if [[ ! -d "$HOME/.nvm" ]]; then
++  curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
++fi
++export NVM_DIR="$HOME/.nvm"
++# shellcheck disable=SC1090
++[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
++
++nvm install 22 >/dev/null
++nvm use 22 >/dev/null
++nvm alias default 22 >/dev/null
++
++if ! grep -q 'NVM_DIR="$HOME/.nvm"' "$HOME/.bashrc"; then
++  {
++    echo 'export NVM_DIR="$HOME/.nvm"'
++    echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'
++    echo 'nvm use --silent 22 >/dev/null 2>&1 || true'
++  } >> "$HOME/.bashrc"
++fi
++
++echo "[3/8] OpenClaw CLI..."
++npm install -g openclaw@latest
++hash -r
++openclaw --version
++
++echo "[4/8] signal-cli..."
++if ! command -v signal-cli >/dev/null 2>&1; then
++  VERSION="$(curl -Ls -o /dev/null -w '%{url_effective}' https://github.com/AsamK/signal-cli/releases/latest | sed -e 's|.*/v||')"
++  TMP_DIR="$(mktemp -d)"
++  pushd "$TMP_DIR" >/dev/null
++  curl -L -o "signal-cli-${VERSION}.tar.gz" "https://github.com/AsamK/signal-cli/releases/download/v${VERSION}/signal-cli-${VERSION}.tar.gz"
++  sudo tar xf "signal-cli-${VERSION}.tar.gz" -C /opt
++  sudo ln -sf "/opt/signal-cli-${VERSION}/bin/signal-cli" /usr/local/bin/signal-cli
++  popd >/dev/null
++  rm -rf "$TMP_DIR"
++fi
++signal-cli --version
++
++echo "[5/8] Ensure OpenClaw config exists..."
++if [[ ! -f "$OPENCLAW_CONFIG" ]]; then
++  openclaw onboard --install-daemon
++fi
++
++echo "[6/8] Configure Signal channel in openclaw.json..."
++python3 - <<PY
++import json
++from pathlib import Path
++
++cfg_path = Path("$OPENCLAW_CONFIG")
++cfg = json.loads(cfg_path.read_text())
++
++channels = cfg.setdefault("channels", {})
++signal = channels.setdefault("signal", {})
++signal["enabled"] = True
++signal["account"] = "$SIGNAL_ACCOUNT"
++signal["cliPath"] = "signal-cli"
++signal["dmPolicy"] = "pairing"
++signal.setdefault("autoStart", True)
++signal.setdefault("httpHost", "127.0.0.1")
++signal.setdefault("httpPort", 8080)
++signal.setdefault("startupTimeoutMs", 120000)
++
++cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
++print(f"Updated: {cfg_path}")
++PY
++
++echo "[7/8] Restart gateway..."
++if command -v systemctl >/dev/null 2>&1; then
++  systemctl --user daemon-reload || true
++  systemctl --user restart openclaw-gateway.service || true
++fi
++
++echo "[8/8] Status..."
++openclaw gateway status || true
++
++echo
++echo "NEXT:"
++echo "1) Link Signal now:"
++echo "   signal-cli link -n \"OpenClaw\""
++echo "   (scan QR from Signal mobile app)"
++echo
++echo "2) Start logs:"
++echo "   openclaw logs --follow"
++echo
++echo "3) Pair first DM sender:"
++echo "   openclaw pairing list signal"
++echo "   openclaw pairing approve signal <CODE>"
