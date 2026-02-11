@@ -27,3 +27,6 @@ Thumbs.db
 
 # ComfyUI lock file
 comfyui_lock.txt
+
+# Local OpenClaw source checkout (kept out of this repo history)
+openclaw/

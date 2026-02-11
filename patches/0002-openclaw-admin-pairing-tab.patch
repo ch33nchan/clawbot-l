@@ -1,0 +1,532 @@
+diff --git a/openclaw/src/gateway/server-methods.ts b/openclaw/src/gateway/server-methods.ts
+index 1d8437f73..f52b2389d 100644
+--- a/openclaw/src/gateway/server-methods.ts
++++ b/openclaw/src/gateway/server-methods.ts
+@@ -14,6 +14,7 @@ import { healthHandlers } from "./server-methods/health.js";
+ import { logsHandlers } from "./server-methods/logs.js";
+ import { modelsHandlers } from "./server-methods/models.js";
+ import { nodeHandlers } from "./server-methods/nodes.js";
++import { pairingHandlers } from "./server-methods/pairing.js";
+ import { sendHandlers } from "./server-methods/send.js";
+ import { sessionsHandlers } from "./server-methods/sessions.js";
+ import { skillsHandlers } from "./server-methods/skills.js";
+@@ -46,6 +47,10 @@ const PAIRING_METHODS = new Set([
+   "device.token.rotate",
+   "device.token.revoke",
+   "node.rename",
++  "pairing.channels",
++  "pairing.list",
++  "pairing.allowfrom.list",
++  "pairing.approve",
+ ]);
+ const ADMIN_METHOD_PREFIXES = ["exec.approvals."];
+ const READ_METHODS = new Set([
+@@ -183,6 +188,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
+   ...systemHandlers,
+   ...updateHandlers,
+   ...nodeHandlers,
++  ...pairingHandlers,
+   ...sendHandlers,
+   ...usageHandlers,
+   ...agentHandlers,
+diff --git a/openclaw/ui/src/ui/app-render.ts b/openclaw/ui/src/ui/app-render.ts
+index 5431627e0..7f3924684 100644
+--- a/openclaw/ui/src/ui/app-render.ts
++++ b/openclaw/ui/src/ui/app-render.ts
+@@ -41,6 +41,11 @@ import {
+ } from "./controllers/exec-approvals.ts";
+ import { loadLogs } from "./controllers/logs.ts";
+ import { loadNodes } from "./controllers/nodes.ts";
++import {
++  approvePairingRequest,
++  loadPairingChannels,
++  loadPairingForChannel,
++} from "./controllers/pairing.ts";
+ import { loadPresence } from "./controllers/presence.ts";
+ import { deleteSession, loadSessions, patchSession } from "./controllers/sessions.ts";
+ import {
+@@ -63,6 +68,7 @@ const debouncedLoadUsage = (state: UsageState) => {
+   usageDateDebounceTimeout = window.setTimeout(() => void loadUsage(state), 400);
+ };
+ import { renderAgents } from "./views/agents.ts";
++import { renderAdmin } from "./views/admin.ts";
+ import { renderChannels } from "./views/channels.ts";
+ import { renderChat } from "./views/chat.ts";
+ import { renderConfig } from "./views/config.ts";
+@@ -279,6 +285,29 @@ export function renderApp(state: AppViewState) {
+             : nothing
+         }
+ 
++        ${
++          state.tab === "admin"
++            ? renderAdmin({
++                connected: state.connected,
++                loading: state.adminPairingLoading,
++                error: state.adminPairingError,
++                channels: state.adminPairingChannels,
++                selectedChannel: state.adminPairingSelectedChannel,
++                requests: state.adminPairingRequests,
++                allowFrom: state.adminPairingAllowFrom,
++                onRefresh: () => {
++                  void loadPairingChannels(state);
++                  if (state.adminPairingSelectedChannel) {
++                    void loadPairingForChannel(state, state.adminPairingSelectedChannel);
++                  }
++                },
++                onChannelChange: (channel) => void loadPairingForChannel(state, channel),
++                onApprove: (code) =>
++                  void approvePairingRequest(state, state.adminPairingSelectedChannel, code),
++              })
++            : nothing
++        }
++
+         ${
+           state.tab === "instances"
+             ? renderInstances({
+diff --git a/openclaw/ui/src/ui/app-settings.ts b/openclaw/ui/src/ui/app-settings.ts
+index e0860e4e5..bf3257cf0 100644
+--- a/openclaw/ui/src/ui/app-settings.ts
++++ b/openclaw/ui/src/ui/app-settings.ts
+@@ -19,6 +19,7 @@ import { loadDevices } from "./controllers/devices.ts";
+ import { loadExecApprovals } from "./controllers/exec-approvals.ts";
+ import { loadLogs } from "./controllers/logs.ts";
+ import { loadNodes } from "./controllers/nodes.ts";
++import { loadPairingChannels, loadPairingForChannel } from "./controllers/pairing.ts";
+ import { loadPresence } from "./controllers/presence.ts";
+ import { loadSessions } from "./controllers/sessions.ts";
+ import { loadSkills } from "./controllers/skills.ts";
+@@ -51,6 +52,7 @@ type SettingsHost = {
+   agentsList?: AgentsListResult | null;
+   agentsSelectedId?: string | null;
+   agentsPanel?: "overview" | "files" | "tools" | "skills" | "channels" | "cron";
++  adminPairingSelectedChannel?: string;
+   themeMedia: MediaQueryList | null;
+   themeMediaHandler: ((event: MediaQueryListEvent) => void) | null;
+   pendingGatewayUrl?: string | null;
+@@ -188,6 +190,15 @@ export async function refreshActiveTab(host: SettingsHost) {
+   if (host.tab === "channels") {
+     await loadChannelsTab(host);
+   }
++  if (host.tab === "admin") {
++    await loadPairingChannels(host as unknown as Parameters<typeof loadPairingChannels>[0]);
++    if (host.adminPairingSelectedChannel) {
++      await loadPairingForChannel(
++        host as unknown as Parameters<typeof loadPairingForChannel>[0],
++        host.adminPairingSelectedChannel,
++      );
++    }
++  }
+   if (host.tab === "instances") {
+     await loadPresence(host as unknown as OpenClawApp);
+   }
+diff --git a/openclaw/ui/src/ui/app-view-state.ts b/openclaw/ui/src/ui/app-view-state.ts
+index f01b4f915..6a6cd65ac 100644
+--- a/openclaw/ui/src/ui/app-view-state.ts
++++ b/openclaw/ui/src/ui/app-view-state.ts
+@@ -3,6 +3,7 @@ import type { CompactionStatus } from "./app-tool-stream.ts";
+ import type { DevicePairingList } from "./controllers/devices.ts";
+ import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
+ import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
++import type { AdminPairingRequest } from "./controllers/pairing.ts";
+ import type { SkillMessage } from "./controllers/skills.ts";
+ import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
+ import type { Tab } from "./navigation.ts";
+@@ -118,6 +119,12 @@ export type AppViewState = {
+   whatsappBusy: boolean;
+   nostrProfileFormState: NostrProfileFormState | null;
+   nostrProfileAccountId: string | null;
++  adminPairingLoading: boolean;
++  adminPairingError: string | null;
++  adminPairingChannels: string[];
++  adminPairingSelectedChannel: string;
++  adminPairingRequests: AdminPairingRequest[];
++  adminPairingAllowFrom: string[];
+   configFormDirty: boolean;
+   presenceLoading: boolean;
+   presenceEntries: PresenceEntry[];
+diff --git a/openclaw/ui/src/ui/app.ts b/openclaw/ui/src/ui/app.ts
+index bb2c9f154..50150d4b2 100644
+--- a/openclaw/ui/src/ui/app.ts
++++ b/openclaw/ui/src/ui/app.ts
+@@ -6,6 +6,7 @@ import type { DevicePairingList } from "./controllers/devices.ts";
+ import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
+ import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
+ import type { SkillMessage } from "./controllers/skills.ts";
++import type { AdminPairingRequest } from "./controllers/pairing.ts";
+ import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
+ import type { Tab } from "./navigation.ts";
+ import type { ResolvedTheme, ThemeMode } from "./theme.ts";
+@@ -193,6 +194,12 @@ export class OpenClawApp extends LitElement {
+   @state() whatsappBusy = false;
+   @state() nostrProfileFormState: NostrProfileFormState | null = null;
+   @state() nostrProfileAccountId: string | null = null;
++  @state() adminPairingLoading = false;
++  @state() adminPairingError: string | null = null;
++  @state() adminPairingChannels: string[] = [];
++  @state() adminPairingSelectedChannel = "";
++  @state() adminPairingRequests: AdminPairingRequest[] = [];
++  @state() adminPairingAllowFrom: string[] = [];
+ 
+   @state() presenceLoading = false;
+   @state() presenceEntries: PresenceEntry[] = [];
+diff --git a/openclaw/ui/src/ui/navigation.ts b/openclaw/ui/src/ui/navigation.ts
+index c4208fb50..c1aadcdef 100644
+--- a/openclaw/ui/src/ui/navigation.ts
++++ b/openclaw/ui/src/ui/navigation.ts
+@@ -4,7 +4,7 @@ export const TAB_GROUPS = [
+   { label: "Chat", tabs: ["chat"] },
+   {
+     label: "Control",
+-    tabs: ["overview", "channels", "instances", "sessions", "usage", "cron"],
++    tabs: ["overview", "channels", "admin", "instances", "sessions", "usage", "cron"],
+   },
+   { label: "Agent", tabs: ["agents", "skills", "nodes"] },
+   { label: "Settings", tabs: ["config", "debug", "logs"] },
+@@ -14,6 +14,7 @@ export type Tab =
+   | "agents"
+   | "overview"
+   | "channels"
++  | "admin"
+   | "instances"
+   | "sessions"
+   | "usage"
+@@ -29,6 +30,7 @@ const TAB_PATHS: Record<Tab, string> = {
+   agents: "/agents",
+   overview: "/overview",
+   channels: "/channels",
++  admin: "/admin",
+   instances: "/instances",
+   sessions: "/sessions",
+   usage: "/usage",
+@@ -132,6 +134,8 @@ export function iconForTab(tab: Tab): IconName {
+       return "barChart";
+     case "channels":
+       return "link";
++    case "admin":
++      return "settings";
+     case "instances":
+       return "radio";
+     case "sessions":
+@@ -163,6 +167,8 @@ export function titleForTab(tab: Tab) {
+       return "Overview";
+     case "channels":
+       return "Channels";
++    case "admin":
++      return "Admin";
+     case "instances":
+       return "Instances";
+     case "sessions":
+@@ -196,6 +202,8 @@ export function subtitleForTab(tab: Tab) {
+       return "Gateway status, entry points, and a fast health read.";
+     case "channels":
+       return "Manage channels and settings.";
++    case "admin":
++      return "Approve onboarding requests and review allowlists.";
+     case "instances":
+       return "Presence beacons from connected clients and nodes.";
+     case "sessions":
+diff --git a/openclaw/src/gateway/server-methods/pairing.ts b/openclaw/src/gateway/server-methods/pairing.ts
+new file mode 100644
+index 000000000..f4c6aa0d1
+--- /dev/null
++++ b/openclaw/src/gateway/server-methods/pairing.ts
+@@ -0,0 +1,103 @@
++import { normalizeChannelId } from "../../channels/plugins/index.js";
++import { listPairingChannels, notifyPairingApproved } from "../../channels/plugins/pairing.js";
++import { loadConfig } from "../../config/config.js";
++import {
++  approveChannelPairingCode,
++  listChannelPairingRequests,
++  readChannelAllowFromStore,
++  type PairingChannel,
++} from "../../pairing/pairing-store.js";
++import { ErrorCodes, errorShape } from "../protocol/index.js";
++import type { GatewayRequestHandlers } from "./types.js";
++
++function parsePairingChannel(raw: unknown, channels: PairingChannel[]): PairingChannel | null {
++  const value = (
++    typeof raw === "string"
++      ? raw
++      : typeof raw === "number" || typeof raw === "boolean"
++        ? String(raw)
++        : ""
++  )
++    .trim()
++    .toLowerCase();
++  if (!value) {
++    return null;
++  }
++  const normalized = normalizeChannelId(value) ?? value;
++  if (!channels.includes(normalized as PairingChannel)) {
++    return null;
++  }
++  return normalized as PairingChannel;
++}
++
++export const pairingHandlers: GatewayRequestHandlers = {
++  "pairing.channels": async ({ respond }) => {
++    const channels = listPairingChannels();
++    respond(true, { channels }, undefined);
++  },
++
++  "pairing.list": async ({ params, respond }) => {
++    const channels = listPairingChannels();
++    const channel = parsePairingChannel((params as { channel?: unknown }).channel, channels);
++    if (!channel) {
++      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid pairing channel"));
++      return;
++    }
++    const requests = await listChannelPairingRequests(channel);
++    respond(true, { channel, requests }, undefined);
++  },
++
++  "pairing.allowfrom.list": async ({ params, respond }) => {
++    const channels = listPairingChannels();
++    const channel = parsePairingChannel((params as { channel?: unknown }).channel, channels);
++    if (!channel) {
++      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "invalid pairing channel"));
++      return;
++    }
++    const allowFrom = await readChannelAllowFromStore(channel);
++    respond(true, { channel, allowFrom }, undefined);
++  },
++
++  "pairing.approve": async ({ params, respond }) => {
++    const channels = listPairingChannels();
++    const parsed = params as { channel?: unknown; code?: unknown; notify?: unknown };
++    const channel = parsePairingChannel(parsed.channel, channels);
++    const code = typeof parsed.code === "string" ? parsed.code.trim() : "";
++    const notify = parsed.notify === true;
++    if (!channel || !code) {
++      respond(
++        false,
++        undefined,
++        errorShape(ErrorCodes.INVALID_REQUEST, "pairing.approve requires channel and code"),
++      );
++      return;
++    }
++
++    const approved = await approveChannelPairingCode({ channel, code });
++    if (!approved) {
++      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "unknown pairing code"));
++      return;
++    }
++
++    let notified = false;
++    if (notify) {
++      const cfg = loadConfig();
++      await notifyPairingApproved({
++        channelId: channel,
++        id: approved.id,
++        cfg,
++      }).catch(() => undefined);
++      notified = true;
++    }
++
++    respond(
++      true,
++      {
++        channel,
++        approved,
++        notified,
++      },
++      undefined,
++    );
++  },
++};
+diff --git a/openclaw/ui/src/ui/controllers/pairing.ts b/openclaw/ui/src/ui/controllers/pairing.ts
+new file mode 100644
+index 000000000..8d5b890b3
+--- /dev/null
++++ b/openclaw/ui/src/ui/controllers/pairing.ts
+@@ -0,0 +1,83 @@
++import type { GatewayBrowserClient } from "../gateway.ts";
++
++export type AdminPairingRequest = {
++  id: string;
++  code: string;
++  createdAt: string;
++  lastSeenAt: string;
++  meta?: Record<string, string>;
++};
++
++export type AdminPairingState = {
++  client: GatewayBrowserClient | null;
++  connected: boolean;
++  adminPairingLoading: boolean;
++  adminPairingError: string | null;
++  adminPairingChannels: string[];
++  adminPairingSelectedChannel: string;
++  adminPairingRequests: AdminPairingRequest[];
++  adminPairingAllowFrom: string[];
++};
++
++export async function loadPairingChannels(state: AdminPairingState) {
++  if (!state.client || !state.connected) {
++    return;
++  }
++  state.adminPairingLoading = true;
++  state.adminPairingError = null;
++  try {
++    const res = await state.client.request<{ channels?: string[] }>("pairing.channels", {});
++    const channels = Array.isArray(res?.channels) ? res.channels : [];
++    state.adminPairingChannels = channels;
++    if (channels.length === 0) {
++      state.adminPairingSelectedChannel = "";
++      state.adminPairingRequests = [];
++      state.adminPairingAllowFrom = [];
++      return;
++    }
++    if (!channels.includes(state.adminPairingSelectedChannel)) {
++      state.adminPairingSelectedChannel = channels[0];
++    }
++  } catch (err) {
++    state.adminPairingError = String(err);
++  } finally {
++    state.adminPairingLoading = false;
++  }
++}
++
++export async function loadPairingForChannel(state: AdminPairingState, channel: string) {
++  if (!state.client || !state.connected || !channel) {
++    return;
++  }
++  state.adminPairingLoading = true;
++  state.adminPairingError = null;
++  try {
++    const [pendingRes, allowRes] = await Promise.all([
++      state.client.request<{ requests?: AdminPairingRequest[] }>("pairing.list", { channel }),
++      state.client.request<{ allowFrom?: string[] }>("pairing.allowfrom.list", { channel }),
++    ]);
++    state.adminPairingSelectedChannel = channel;
++    state.adminPairingRequests = Array.isArray(pendingRes?.requests) ? pendingRes.requests : [];
++    state.adminPairingAllowFrom = Array.isArray(allowRes?.allowFrom) ? allowRes.allowFrom : [];
++  } catch (err) {
++    state.adminPairingError = String(err);
++  } finally {
++    state.adminPairingLoading = false;
++  }
++}
++
++export async function approvePairingRequest(state: AdminPairingState, channel: string, code: string) {
++  if (!state.client || !state.connected || !channel || !code) {
++    return;
++  }
++  state.adminPairingLoading = true;
++  state.adminPairingError = null;
++  try {
++    await state.client.request("pairing.approve", { channel, code, notify: true });
++    await loadPairingForChannel(state, channel);
++  } catch (err) {
++    state.adminPairingError = String(err);
++  } finally {
++    state.adminPairingLoading = false;
++  }
++}
+diff --git a/openclaw/ui/src/ui/views/admin.ts b/openclaw/ui/src/ui/views/admin.ts
+new file mode 100644
+index 000000000..5756d5b5d
+--- /dev/null
++++ b/openclaw/ui/src/ui/views/admin.ts
+@@ -0,0 +1,101 @@
++import { html } from "lit";
++import { formatRelativeTimestamp } from "../format.ts";
++import type { AdminPairingRequest } from "../controllers/pairing.ts";
++
++export type AdminProps = {
++  connected: boolean;
++  loading: boolean;
++  error: string | null;
++  channels: string[];
++  selectedChannel: string;
++  requests: AdminPairingRequest[];
++  allowFrom: string[];
++  onRefresh: () => void;
++  onChannelChange: (channel: string) => void;
++  onApprove: (code: string) => void;
++};
++
++export function renderAdmin(props: AdminProps) {
++  return html`
++    <section class="card">
++      <div class="row" style="justify-content: space-between;">
++        <div>
++          <div class="card-title">User Onboarding</div>
++          <div class="card-sub">Approve pending channel pairing requests and review allowlist.</div>
++        </div>
++        <button class="btn" ?disabled=${props.loading || !props.connected} @click=${props.onRefresh}>
++          ${props.loading ? "Loading..." : "Refresh"}
++        </button>
++      </div>
++      <div class="row" style="margin-top: 12px; align-items: end;">
++        <label class="field" style="max-width: 280px;">
++          <span>Channel</span>
++          <select
++            .value=${props.selectedChannel}
++            ?disabled=${props.channels.length === 0 || props.loading}
++            @change=${(e: Event) => props.onChannelChange((e.target as HTMLSelectElement).value)}
++          >
++            ${props.channels.map((channel) => html`<option value=${channel}>${channel}</option>`)}
++          </select>
++        </label>
++      </div>
++      ${props.error ? html`<div class="callout danger" style="margin-top: 12px;">${props.error}</div>` : ""}
++      ${!props.connected ? html`<div class="callout" style="margin-top: 12px;">Connect to gateway first.</div>` : ""}
++    </section>
++
++    <section class="grid grid-cols-2" style="margin-top: 18px;">
++      <div class="card">
++        <div class="card-title">Pending Requests</div>
++        <div class="card-sub">New users waiting for approval.</div>
++        <div class="list" style="margin-top: 12px;">
++          ${
++            props.requests.length === 0
++              ? html`<div class="muted">No pending requests.</div>`
++              : props.requests.map((request) => renderPendingRequest(request, props))
++          }
++        </div>
++      </div>
++      <div class="card">
++        <div class="card-title">Approved Users</div>
++        <div class="card-sub">Current allowlist for selected channel.</div>
++        <div class="list" style="margin-top: 12px;">
++          ${
++            props.allowFrom.length === 0
++              ? html`<div class="muted">No approved users yet.</div>`
++              : props.allowFrom.map(
++                  (entry) => html`<div class="list-item"><div class="mono">${entry}</div></div>`,
++                )
++          }
++        </div>
++      </div>
++    </section>
++  `;
++}
++
++function renderPendingRequest(request: AdminPairingRequest, props: AdminProps) {
++  const requestedAt = formatRelativeTimestamp(parseTimestamp(request.createdAt));
++  const seenAt = formatRelativeTimestamp(parseTimestamp(request.lastSeenAt));
++  return html`
++    <div class="list-item">
++      <div class="list-main">
++        <div class="list-title">${request.id}</div>
++        <div class="list-sub">Code: <span class="mono">${request.code}</span></div>
++        <div class="muted" style="margin-top: 6px;">Requested ${requestedAt} · last seen ${seenAt}</div>
++      </div>
++      <div class="list-meta">
++        <button
++          class="btn btn--sm primary"
++          ?disabled=${props.loading}
++          @click=${() => props.onApprove(request.code)}
++        >
++          Approve
++        </button>
++      </div>
++    </div>
++  `;
++}
++
++function parseTimestamp(value: string): number | null {
++  const ts = Date.parse(value);
++  return Number.isFinite(ts) ? ts : null;
++}
